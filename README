@@ -1,0 +1,300 @@
+dos884, asafbe
+Alex Fainstein (307356840), Asaf Bentabou (200942704)
+EX: 3
+
+OS 2015/2016 Targil 3
+Writing a MapReduce Framework - Multi-threaded programming
+
+FILES:
+Makefile     -- make.
+README       -- This file.
+DebugClient.h -- this is the client we use for our own clients. 
+                (for printing and debuging capabilities)
+EnvController.h -- a header for controlling environment variables like debuging 
+                   vars etc
+MapReduceFramework.cpp -- the main framework
+Search.cpp  -- main search testing program
+
+--------------------------------------------------------------------------------
+Part1: Design Explanations
+===========================
+1. Search program explained:
+
+Usage:
+The Search program receives the following arguments:
+
+ a. Substring to search (String).
+ b. Folders path - any number of folders to search in.
+The program searches all the given folders, and prints to the screen all the
+files that include the given substring in their name.
+The main goal of this program is to use the Map and Reduce Framework we wrote,
+test it, and understand it better.
+
+Implementation:
+First of we inherited the key&value classes and defined them inside the 
+'DebugClient.h' header (we've used it for more testing programs we wrote).
+In each class we defined the "<" operator to work between the given (key,value)
+pair.
+We have also added a void pointer to any data type we would like to handle.
+Finally we have "ran over" the "<<" operator for easier printing and debugging.
+Inside the main function we have handled the arguments from the command line.
+Each folder path was saved inside a k1v1 list of pairs as the key and the value
+is NULL.
+Then we used the function of the mapandreduce framework to process the final
+output (It recived a pointer to a mapandreduce object with the implemented
+functions for our search program, the list of k1v1 and the number of threads
+requested).
+The final output is combined of a folder name as the key, and the number of
+times we found its name as the value.
+Then, if the folder name contained the string we wanted to match, it will be
+printed the number of times we've seen it. 
+
+The map and reduce implementations:
+
+The mapping function recives the paths to the folders and tries to open the
+path. Upon failure nothing happens, otherwise it lists all of the file names of
+the dir and emit2() pairs of (key is the file name, value is the digit '1').
+
+The reducing function recives a file name, and a list of '1', as the number of
+the occurrences of the given word. It sums them up and emit3 (the file name as
+the key, total number of occurrences as the value).
+
+
+2. Map and Reduce Framework explained:
+
+Our design follows very closely to the suggested design.
+some fine points on our design
+a) To minimize code and design complexity and to avoid passing
+   data around to new threads we decided to make many of our vars global.
+b) We assume the framework will run on "aquarium" computers, thus we assume
+   pthread_t is equivalent to ulong.
+c) We heavily debugged with macros that use mutexes in order to print thread
+   actions in the correct order.
+
+Part2: Theoretical Questions(15 pts)
+======================================
+1. In the MapReduceFramework, you used conditional variable and c++'s containers
+to synchronize between the ExecMap and the Shuffle. An alternative approach is
+to use pipe and select. How would you implement it? You are required to propose
+a design, which includes at least answers to the following questions:
+  ? Which threads use select, which threads write to the pipe and which read
+    from the pipe
+  ? What data is written to the pipe (writing objects may not be easy)
+  ? Which data-structures\containers would you use?
+  ? What would happen at the end (e.g. how does the consumer of the pipe
+    know that there is no more data).
+Tip: pay attention that the file descriptors table is per process, not per
+     thread.
+
+Answer:
+--------
+First we'll define the terms:
+
+A pipe is a mechanism for interprocess communication. Data written to the pipe
+by one process can be read by another process. The primitive for creating a pipe
+is the pipe function. This creates both the reading and writing ends of the
+pipe. 
+
+The fork command is typically used when, a process creates a pipe and it forks
+one or more child processes just before the creation of the pipe.
+The pipe is then used for communication either between the parent or child
+processes, or between two sibling processes.
+
+Select checks to see if any sockets are ready for reading (readfds), writing
+(writefds), or have an exceptional condition pending (exceptfds).
+Timeout function parameter points to a timeval structure. This time structure
+allows you to specify a timeout period.
+If the time is exceeded and select() still hasn't found any ready file
+descriptors, it'll return so you can continue processing.
+
+The operation:
+
+The main process will fork the shuffle and the ExecMap threads according to the
+threadLevel required.
+In the main process before forking we'll define:
+  a. pipes between each ExecMap and the main process.
+  b. pipes between each ExecMap and the shuffle thread.
+The inital list (key1,value1) is global inside the entire process, so each of
+the ExecMap threads can reach it.
+The shuffle thread will collect the processed information from each thread, and
+will save it globally.
+We'll solve the problem of multiple ExecMap threads access at the same time to
+the main and by the shuffle, by the Select function.
+It also solves the timeout problem.
+Finally we'll define pipes between each reduce thread (after we returned to the
+main thread) and the the main thread.
+Regrading to writing and reading- the ExecMap threads are reading from the pipe
+and the main writes, than the ExecMap threads write to the shuffle pipes.
+Finally the reduce threads read from the main pipes, and writes back the
+processed information (k3v3).
+The information passed through the pipes is purly textual, representing the
+current state of the (k,v) pairs, seperated by some sort of delimeter.
+The data structures can be similar to the ones we've used in our exercise:
+ a. A vector of pointers to lists, so all ExecMap threads can have simultaneous
+    access.
+ b. input and output lists.
+The consumer of the pipe will know that there is no more data, either by recving
+a return value from the reading function that singnals that, or as mentioned,
+by timing out.
+
+2. Assuming that a user wants to run the MapReduceFramework on his personal
+computer, which contains octa-cores (8 core) but without Hyper-threading
+support.
+What multiThreadLevel would you use to optimize the performance?
+A good solution contains detailed explanation.
+An excellent solution might be based on measurements.
+
+Answer:
+--------
+We both have a 4 core computer (none of us had 8 cores, and for virtualization
+of 8 cores, the actual machine has to have 8 cores..),
+Also, we found out, that Hyper-threading feature can be turned off from the
+bios.
+Eventually we decided not to measure, because we didn't know if there is any
+correlation between 4 and 8 cores regrading multiThreadLevel.
+
+We assume that multiThreadLevel of 6 is the way to go.
+Each of the execmaps would run on a thread of it's own,
+the main function would run on a thread
+and the shuffle thread would run on a thread.
+When entering shuffle stage, 7 cores in total would be utilized by our program.
+
+3. Nira, Moti, Danny and Galit decided to implement the requirements of the
+MapReduceFramework as described in this exercise.
+However, each one of them implemented the concurrency slightly different:
+
+a. Nira used a single thread and a single process (single flow like "regular"
+   program, no concurrency).
+b. Moti used Posix's library as required
+c. Danny used the user level threads that he implemented in exercise 2
+d. Galit didn't understand the concept of threads, and therefore decided
+   to use multi-processes rather than multi-threads (this means that instead of
+   creating a thread, she created a process).
+
+You are required to compare the following attributes for each one of them:
+  1) Utilizing multi-cores
+  2) The ability to create a sophisticated scheduler, based on internal data.
+  3) Communication time (between different threads/processes)
+  4) Ability to progress while a certain thread/process is blocked (e.g. is
+     waiting for disk)
+  5) Overall speed
+
+Answer:
+--------
+a. Single thread and a single process:
+1) No multi-core utilization (single process & single thread at any given time).
+2) No need of a scheduler, because there aren't any multi-process or
+   multi-threads to switch between.
+3) As said, single-process-single-thread configuration. Communication time is
+   based on context-switch of the main process with the other process of the
+   running OS manged process.
+4) When the single thread is blocked, there isn't any ability to progress with
+   the instructions execution.
+5) The slowest implementation among them, no concurrency at all.
+
+b. Posix's library as required (like we did):
+Every single process in a Linux system is a "kernel thread", and every
+user-created pthread (posix thread) is also implemented as a new
+"kernel thread", therefor:
+1) It does utilizes multi-cores.
+2) Uses the OS scheduler between the kernel level thread, very efficient and
+   shares internal data between threads.
+3) Communication time is very fast, even faster than between process (shared
+   data).
+   (pthread_create() for creating a new thread, is much faster than fork()
+   used for creating new processes, for example).
+4) Can easily context-switch between threads while some of the threads are
+   blocked (for I/O for example), thus enabling progress.
+5) Very fast, maybe even the fastest.
+
+c. User level threads that we implemented in exercise 2:
+1) Do not utilize multi-cores. The OS is only aware of the single process that
+   holds all of the user level threads.
+2) Data is easily shared between all threads. The level of sophistication of the
+   scheduler is up to how talented is the programmer;) can be very
+   sophisticated - though most likely it'll be rather poor in comparison to OS
+   scheduling which is constantly maintained and evolved.
+3) Communication time is very fast, maybe even faster than kernel-level threads,
+   because of communication inside the same process with local data structures.
+4) As we mentioned, because the OS is only aware of the single process that
+   holds all of the user level threads, blockage of a single thread will damage
+   the ability to progress and will block all of the threads.
+5) A bit faster than a single-process-single-thread configuration because, it
+   allows the single process the utilize it's running time better, but still
+   slow.
+
+d. Multi-processes rather than multi-threads:
+1) Process-per-core instead of thread-per-core also allows the utilization of
+   multi-cores.
+2) Uses the OS scheduler between the processes.
+3) Communication time is fast, but a-bit slower than kernel level threads 
+   communication, because of different PCBs.
+4) Ability to progress isn't affected, because of context-switching between
+   processes.
+5) Overall speed is slower than using kernel-level-threads, but still utilizes
+   multi-cores, so faster than a single-thread work, and in some cases faster
+   than user-level-threads.
+
+4. For a kernel level thread, a user-level thread and a process, what is shared
+for a parent and its child from the following:
+	a. Stack
+	b. Heap
+	c. Global variables.
+
+Answer:
+--------
+i.   kernel level thread - Shared: Heap, Global-variables; Non-Shared: Stack.
+ii.  user-level thread   - Shared: Heap, Global-variables; (*)Non-Shared: Stack.
+       (*) The stack memory for each thread is allocated inside a region of the
+           process memory, that holds all of the user-level-threads.
+iii. process             - Shared: None; Non-Shared: All (Each process has it's
+                                                     own PCB).
+
+5. What is the difference between livelock and deadlock?
+Give an example for each one of them.
+Answer:
+--------
+Deadlock:
+
+A deadlock, is a situation, in which two computer programs sharing the same
+resource are preventing each other from accessing that resource.
+Resulting in both programs wait indefinitely.
+
+LiveLock Difference:
+
+Similar problem and result as a deadlock, but with a little difference - this
+time the programs will try to solve the deadlock's dead-end, but to no avail.
+Each program will change it's state, in order to get a hold on the resource or
+letting the other program to have the resource, but in the same time.
+Resulting no progress in any of the programs.
+
+Examples:
+In both examples we'll use the the dinging philosophers metaphor:
+"5 philosophers sitting round a table. On the table lies 5 forks.
+Every philosophers either wants to think, or he wants to eat.
+If he decides to eat, he must secure both forks, the one to his left and the
+one to his right. The philosophers never communicate with one another."
+
+Deadlock - When all philosophers picks up the same fork, i.e, the left one,
+           they'll wait forever for the second one.
+LiveLock - Say the philosophers reached the deadlock described above.
+		   Now, they all decide to return their fork, and wait 5 minutes before
+		   they try and pick up the forks again.
+		   But.. when picking the forks up again, they pick the left one first,
+		   and all wait for the right fork to be available all over again.
+		   So now what? they'll wait 5 minutes again and again indefinitely.
+
+6. Answer:
+  ---------
+For the following, Gantt Charts are added as JPG files.
+In addtion, we are required to calculate the turnaround time and the average
+wait time.
+The detailed calculations are also on the JPG files.
+IMPORTANT: As learned in the TA, we ignored in all calculations of the CS.
+
+1. Round Robin (RR) with quantum=2: turnaround time-9.4,  average wait time-4.2
+2. First Come First Serve (FCFS): turnaround time-13.2,  average wait time-8
+3. Shortest Remaining Time First (SRTF): turnaround time-7.4,
+                                         average wait time-2.2
+4. Priority Scheduling: turnaround time-11,  average wait time-5.8
+--------------------------------------------------------------------------------
